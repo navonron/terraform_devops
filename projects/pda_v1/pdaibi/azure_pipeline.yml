@@ -1,0 +1,36 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# Note:
+#     * PLATFORM_ENVIRONMENT: is a management group. Allowed values: dev, pprd, prod
+#     * 
+# https://aka.ms/yaml
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - projects/pda/pdaibi/
+
+variables:
+  - name: PROJECT_ID
+    value: pda.pdaibi
+    
+
+stages:
+  - template: ./../../../../azure_pipelines/deploy_project.yml
+    parameters:
+      PLATFORM_ENVIRONMENT: pprd
+      PROJECT_ENVIRONMENT: qa
+      PROJECT_ID: $(PROJECT_ID)
+      DEPENDS_ON:
+
+  #- template: ./../../../../azure_pipelines/deploy_project.yml
+  #  parameters:
+  #    PLATFORM_ENVIRONMENT: prod
+  #    PROJECT_ENVIRONMENT: prod
+  #    PROJECT_ID: $(PROJECT_ID)
+  #    DEPENDS_ON:
+  #    - qa

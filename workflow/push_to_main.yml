@@ -1,0 +1,250 @@
+parameters:
+  - name: env
+    displayName: choose environment to create
+    values:
+      - dev
+      - dev02
+      - pp
+      - prod
+  - name: subscription
+    displayName: choose subscription to deploy the resources
+    values:
+      - Product Engineering Analytics Dev
+  - name: department
+    displayName: choose department
+    values:
+      - pda
+  - name: project
+    displayName: choose project
+    values:
+      - pdaibi
+
+variables:
+- group: ${{ parameters.subscription }}
+- group: CHECKOV_IGNORE
+
+
+pool: Development
+# pool:
+#   vmImage: ubuntu-latest
+
+jobs:
+  - job: tf_config
+    steps:
+    - task: Bash@3
+      displayName: install tf
+      inputs:
+        targetType: inline
+        script: |
+          #!/bin/bash
+          LATEST_VERSION=$(curl -s https://releases.hashicorp.com/terraform/index.json | jq -r '.versions[].version' | sort -V | tail -n1)
+          wget https://releases.hashicorp.com/terraform/$LATEST_VERSION/terraform_${LATEST_VERSION}_linux_amd64.zip
+          unzip terraform_${LATEST_VERSION}_linux_amd64.zip
+          mv terraform /usr/local/bin/
+          
+    - task: Bash@3
+      displayName: install checkov
+      inputs:
+        targetType: inline
+        script: |
+          pip3 install --upgrade pip && pip3 install --upgrade setuptools
+          pip3 install dataclasses
+          pip3 install checkov
+    
+    - task: Bash@3
+      displayName: checkov scan
+      inputs:
+        targetType: 'inline'
+        script: |
+          # run with azure devops agent
+          # export CHECKOV=$(Agent.ToolsDirectory)/checkov
+          # export PATH=$PATH:$CHECKOV
+
+          export PYTHONIOENCODING=utf-8
+          checkov --directory $(agent.builddirectory)/s/modules/azure --skip-check $(CHECKOV_IGNORE)
+
+    - task: DownloadSecureFile@1
+      displayName: download provider.tf 
+      inputs:
+        secureFile: 'provider.tf'
+
+    - task: Bash@3
+      displayName: copy provider.tf to project's folders
+      inputs:
+        targetType: inline
+        script: |
+          # Get all folders for a specific department and project
+          allFolders=($(find "$(agent.builddirectory)/s/projects/${{ parameters.department }}/${{ parameters.project }}" -type d -print))
+
+          # Print all directories from the variable
+          echo "${allFolders[@]}"
+
+          # Copy provider.tf to those folders
+          sourcePath="$(Agent.TempDirectory)/provider.tf"
+          for folder in "${allFolders[@]}"; do
+            targetPath="${folder}/provider.tf"
+            cp "$sourcePath" "$targetPath"
+          done
+
+    # - script: |
+    #       #!/bin/bash
+    #       echo '10.134.168.42 sapdaibidev02.file.core.windows.net sapdaibidev02.file.privatelink.ibi.westus2.azmk8s.io' | tee -a /etc/hosts
+    #       echo '10.134.168.44 sapdaibidev02.blob.core.windows.net sapdaibidev02.blob.privatelink.ibi.westus2.azmk8s.io' | tee -a /etc/hosts
+    #       echo '10.134.168.45 sapdaibidev02.table.core.windows.net sapdaibidev02.table.privatelink.ibi.westus2.azmk8s.io' | tee -a /etc/hosts
+    #       echo '10.134.168.46 sapdaibidev02.queue.core.windows.net sapdaibidev02.queue.privatelink.ibi.westus2.azmk8s.io' | tee -a /etc/hosts
+    #       echo '10.134.168.47 sapdaibidev02.dfs.core.windows.net sapdaibidev02.dfs.privatelink.ibi.westus2.azmk8s.io' | tee -a /etc/hosts
+    #       echo ----------------------------------------
+    #       echo ----------------------------------------
+    #       echo ----------------------------------------
+    #       echo ----------------------------------------
+    #       echo ----------------------------------------
+    #       cat /etc/hosts
+    #       echo ----------------------------------------
+    #       echo ----------------------------------------
+    #       echo ----------------------------------------
+    #       echo ----------------------------------------
+    #       echo ----------------------------------------
+    #   displayName: 'add records to host file'
+        
+    - task: Bash@3
+      displayName: tf init
+      inputs:
+        targetType: inline
+        workingDirectory: '$(agent.builddirectory)/s/projects/${{ parameters.department }}/${{ parameters.project }}/env/${{ parameters.env }}'
+        script: |
+          export HTTP_PROXY="http://proxy-chain.intel.com:912"
+          export HTTPS_PROXY="http://proxy-chain.intel.com:912"
+          export no_proxy="localhost,127.0.0.1,intel.com,windows.net,azure.net"
+          export ARM_CLIENT_ID="$(ARM_CLIENT_ID)"
+          export ARM_CLIENT_SECRET="$(ARM_CLIENT_SECRET)"
+          export ARM_SUBSCRIPTION_ID="$(ARM_SUBSCRIPTION_ID)"
+          export ARM_TENANT_ID="$(ARM_TENANT_ID)"
+          export TF_BACKEND_SUBSCRIPTION_ID="$(TF_BACKEND_SUBSCRIPTION_ID)"
+          export TF_BACKEND_RESOURCE_GROUP="$(TF_BACKEND_RESOURCE_GROUP)"
+          export TF_BACKEND_STORAGE_ACCOUNT="$(TF_BACKEND_STORAGE_ACCOUNT)"
+          export PROJECT_ID="${{ parameters.department }}.${{ parameters.project }}"
+          export PROJECT_ENVIRONMENT="${{ parameters.env }}"
+          terraform init \
+            -backend-config="subscription_id=$TF_BACKEND_SUBSCRIPTION_ID" \
+            -backend-config="resource_group_name=$TF_BACKEND_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TF_BACKEND_STORAGE_ACCOUNT" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=$PROJECT_ID.$PROJECT_ENVIRONMENT.tfstate"
+    
+    - task: Bash@3
+      displayName: tf plan
+      inputs:
+        workingDirectory: '$(agent.builddirectory)/s/projects/${{ parameters.department }}/${{ parameters.project }}/env/${{ parameters.env }}'
+        targetType: inline
+        script: |
+          export HTTP_PROXY="http://proxy-chain.intel.com:912"
+          export HTTPS_PROXY="http://proxy-chain.intel.com:912"
+          export no_proxy="localhost,127.0.0.1,intel.com,windows.net,azure.net"
+          export ARM_CLIENT_ID="$(ARM_CLIENT_ID)"
+          export ARM_CLIENT_SECRET="$(ARM_CLIENT_SECRET)"
+          export ARM_SUBSCRIPTION_ID="$(ARM_SUBSCRIPTION_ID)"
+          export ARM_TENANT_ID="$(ARM_TENANT_ID)"
+          export TF_BACKEND_SUBSCRIPTION_ID="$(TF_BACKEND_SUBSCRIPTION_ID)"
+          export TF_BACKEND_RESOURCE_GROUP="$(TF_BACKEND_RESOURCE_GROUP)"
+          export TF_BACKEND_STORAGE_ACCOUNT="$(TF_BACKEND_STORAGE_ACCOUNT)"
+          export PROJECT_ID="${{ parameters.department }}.${{ parameters.project }}"
+          export PROJECT_ENVIRONMENT="${{ parameters.env }}"
+          terraform plan -out="$PROJECT_ENVIRONMENT.tfplan"
+
+
+  - job: tf_approve
+    dependsOn: tf_config
+    pool: server
+    timeoutInMinutes: 4320
+    steps:
+      - task: ManualValidation@0
+        timeoutInMinutes: 1440
+        inputs:
+          notifyUsers: |
+            ronx.navon@intel.com
+          instructions: |
+            Please validate the Terraform Plan configuration changes
+          onTimeout: 'reject'
+
+
+  - job: tf_apply
+    dependsOn: tf_approve
+    steps:
+      - task: Bash@3
+        displayName: install tf
+        inputs:
+          targetType: inline
+          script: |
+            #!/bin/bash
+            LATEST_VERSION=$(curl -s https://releases.hashicorp.com/terraform/index.json | jq -r '.versions[].version' | sort -V | tail -n1)
+            wget https://releases.hashicorp.com/terraform/$LATEST_VERSION/terraform_${LATEST_VERSION}_linux_amd64.zip
+            unzip terraform_${LATEST_VERSION}_linux_amd64.zip
+            mv terraform /usr/local/bin/
+            
+      - task: DownloadSecureFile@1
+        displayName: download provider.tf 
+        inputs:
+          secureFile: 'provider.tf'
+
+      - task: Bash@3
+        displayName: copy provider.tf to project's folders
+        inputs:
+          targetType: inline
+          script: |
+            # Get all folders for a specific department and project
+            allFolders=($(find "$(agent.builddirectory)/s/projects/${{ parameters.department }}/${{ parameters.project }}" -type d -print))
+
+            # Print all directories from the variable
+            echo "${allFolders[@]}"
+
+            # Copy provider.tf to those folders
+            sourcePath="$(Agent.TempDirectory)/provider.tf"
+            for folder in "${allFolders[@]}"; do
+              targetPath="${folder}/provider.tf"
+              cp "$sourcePath" "$targetPath"
+            done
+
+      - task: Bash@3
+        displayName: tf init
+        inputs:
+          targetType: inline
+          workingDirectory: '$(agent.builddirectory)/s/projects/${{ parameters.department }}/${{ parameters.project }}/env/${{ parameters.env }}'
+          script: |
+            export HTTP_PROXY="http://proxy-chain.intel.com:912"
+            export HTTPS_PROXY="http://proxy-chain.intel.com:912"
+            export no_proxy="localhost,127.0.0.1,intel.com,windows.net,azure.net"
+            export ARM_CLIENT_ID="$(ARM_CLIENT_ID)"
+            export ARM_CLIENT_SECRET="$(ARM_CLIENT_SECRET)"
+            export ARM_SUBSCRIPTION_ID="$(ARM_SUBSCRIPTION_ID)"
+            export ARM_TENANT_ID="$(ARM_TENANT_ID)"
+            export TF_BACKEND_SUBSCRIPTION_ID="$(TF_BACKEND_SUBSCRIPTION_ID)"
+            export TF_BACKEND_RESOURCE_GROUP="$(TF_BACKEND_RESOURCE_GROUP)"
+            export TF_BACKEND_STORAGE_ACCOUNT="$(TF_BACKEND_STORAGE_ACCOUNT)"
+            export PROJECT_ID="${{ parameters.department }}.${{ parameters.project }}"
+            export PROJECT_ENVIRONMENT="${{ parameters.env }}"
+            terraform init \
+              -backend-config="subscription_id=$TF_BACKEND_SUBSCRIPTION_ID" \
+              -backend-config="resource_group_name=$TF_BACKEND_RESOURCE_GROUP" \
+              -backend-config="storage_account_name=$TF_BACKEND_STORAGE_ACCOUNT" \
+              -backend-config="container_name=tfstate" \
+              -backend-config="key=$PROJECT_ID.$PROJECT_ENVIRONMENT.tfstate"
+
+      - task: Bash@3
+        displayName: tf apply
+        inputs:
+          workingDirectory: '$(agent.builddirectory)/s/projects/${{ parameters.department }}/${{ parameters.project }}/env/${{ parameters.env }}'
+          targetType: inline
+          script: |
+            export HTTP_PROXY="http://proxy-chain.intel.com:912"
+            export HTTPS_PROXY="http://proxy-chain.intel.com:912"
+            export no_proxy="localhost,127.0.0.1,intel.com,windows.net,azure.net"
+            export ARM_CLIENT_ID="$(ARM_CLIENT_ID)"
+            export ARM_CLIENT_SECRET="$(ARM_CLIENT_SECRET)"
+            export ARM_SUBSCRIPTION_ID="$(ARM_SUBSCRIPTION_ID)"
+            export ARM_TENANT_ID="$(ARM_TENANT_ID)"
+            export TF_BACKEND_SUBSCRIPTION_ID="$(TF_BACKEND_SUBSCRIPTION_ID)"
+            export TF_BACKEND_RESOURCE_GROUP="$(TF_BACKEND_RESOURCE_GROUP)"
+            export TF_BACKEND_STORAGE_ACCOUNT="$(TF_BACKEND_STORAGE_ACCOUNT)"
+            export PROJECT_ID="${{ parameters.department }}.${{ parameters.project }}"
+            export PROJECT_ENVIRONMENT="${{ parameters.env }}"
+            terraform apply -auto-approve
